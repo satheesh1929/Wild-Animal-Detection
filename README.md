@@ -45,3 +45,5 @@ Scanner (COCO-SSD): Scans the frame for any movement or animal shape.
 Verifier (MobileNet): If an animal is found, the system crops that area and runs a deep classification scan.
 
 Cross-Check: If the Verifier detects a "Tiger" with >5% confidence, it overrides the Scanner and triggers a Red Alert, even if the Scanner thought it was just a "Cat".
+
+Webpage Link: https://satheesh1929.github.io/Wild-Animal-Detection/
