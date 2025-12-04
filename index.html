@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WildSentinel AI: Intelligent Animal Intrusion Detection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- TensorFlow.js Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@latest/dist/coco-ssd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@latest/dist/mobilenet.min.js"></script>
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #000; overflow: hidden; }
+        
+        /* Full Screen Video Container */
+        #app-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            background: #000;
+        }
+
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* Danger Overlay */
+        #danger-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 5;
+            box-shadow: inset 0 0 0 0 rgba(239, 68, 68, 0);
+            transition: box-shadow 0.3s ease;
+        }
+
+        .danger-active {
+            animation: screen-pulse 1s infinite;
+        }
+
+        @keyframes screen-pulse {
+            0% { box-shadow: inset 0 0 0 0 rgba(220, 38, 38, 0); }
+            50% { box-shadow: inset 0 0 50px 20px rgba(220, 38, 38, 0.5); }
+            100% { box-shadow: inset 0 0 0 0 rgba(220, 38, 38, 0); }
+        }
+
+        /* Solid UI Panels (No Blur to prevent glitches) */
+        .glass-panel {
+            background: rgba(17, 24, 39, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        /* UI Layer */
+        #ui-layer {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 1rem;
+            pointer-events: none;
+        }
+
+        .pointer-auto { pointer-events: auto; }
+        .hidden-elm { display: none !important; }
+        
+        /* Neural Feed Text */
+        .scrolling-text {
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            color: #00ff00;
+            text-shadow: 0 0 5px #00ff00;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body class="text-white">
+
+    <!-- Video Layer -->
+    <div id="app-container">
+        <video id="webcam" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+        <div id="danger-overlay"></div>
+    </div>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        
+        <!-- Top Header -->
+        <div class="flex justify-between items-start w-full">
+            <div class="flex flex-col gap-2 pointer-auto max-w-sm">
+                <div class="glass-panel px-4 py-2 rounded-full flex items-center gap-3 w-fit border-l-4 border-green-500">
+                    <i class="ph-fill ph-plant text-green-400 text-2xl"></i>
+                    <h1 class="font-black text-lg tracking-tight">WildSentinel <span class="text-green-400">AI</span></h1>
+                </div>
+                <div id="alertLog" class="flex flex-col gap-2 w-full"></div>
+            </div>
+
+            <div class="flex flex-col gap-2 pointer-auto">
+                <button id="soundToggle" class="glass-panel text-white p-3 rounded-xl hover:bg-gray-800 transition-all flex items-center justify-between gap-3 w-32 border-l-4 border-green-500">
+                    <div class="flex items-center gap-2">
+                        <i id="soundIcon" class="ph-fill ph-speaker-high text-xl"></i>
+                        <span class="text-xs font-bold">AUDIO</span>
+                    </div>
+                    <span id="soundText" class="text-xs font-black text-green-400">ON</span>
+                </button>
+                
+                <button id="snapBtn" class="glass-panel text-white p-3 rounded-xl hover:bg-gray-800 transition-all flex items-center justify-between gap-3 w-32 border-l-4 border-blue-500">
+                    <div class="flex items-center gap-2">
+                        <i class="ph-fill ph-camera text-xl"></i>
+                        <span class="text-xs font-bold">SNAP</span>
+                    </div>
+                </button>
+
+                <button id="infoBtn" class="glass-panel text-white p-3 rounded-xl hover:bg-gray-800 transition-all flex items-center justify-center gap-2 w-32 border-l-4 border-gray-500">
+                    <i class="ph-bold ph-info text-xl"></i>
+                    <span class="text-xs font-bold">ABOUT</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- System Status Overlays -->
+        
+        <!-- 1. Initial Loading -->
+        <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center pointer-auto bg-black z-50">
+            <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-green-500 mb-4"></div>
+            <h2 class="text-2xl font-black text-white mb-2">SYSTEM BOOT</h2>
+            <p class="text-green-400 font-mono text-xs font-bold animate-pulse">LOADING AI MODELS...</p>
+        </div>
+
+        <!-- 2. Camera Loading -->
+        <div id="cameraLoading" class="absolute inset-0 flex flex-col items-center justify-center pointer-auto bg-black/90 z-40 hidden-elm">
+            <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500 mb-4"></div>
+            <h2 class="text-xl font-bold text-white">ACCESSING SENSORS</h2>
+            <p class="text-gray-400 text-sm mt-2">Please allow camera permission...</p>
+        </div>
+
+        <!-- 3. Config Screen -->
+        <div id="startOverlay" class="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-40 hidden-elm pointer-auto p-4">
+            <div class="w-full max-w-md bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-2xl">
+                <div class="text-center mb-6">
+                    <i class="ph-duotone ph-gear-six text-5xl text-green-500 mb-3 inline-block"></i>
+                    <h3 class="text-2xl font-black text-white">CONFIGURATION</h3>
+                    <p class="text-gray-400 text-sm">Setup alert preferences</p>
+                </div>
+                
+                <div class="mb-4">
+                    <label class="block text-xs font-bold text-gray-400 mb-1 uppercase">Your Phone (WhatsApp)</label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="ph-bold ph-phone text-green-500"></i>
+                        </div>
+                        <input type="tel" id="phoneNumber" placeholder="919876543210" 
+                            class="w-full pl-10 pr-4 py-3 bg-gray-900 border border-gray-600 rounded-xl text-white text-sm font-mono focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500">
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">Include Country Code (No + symbol)</p>
+                </div>
+
+                <div class="flex items-center gap-3 mb-6 p-3 bg-gray-900 rounded-lg border border-gray-700">
+                    <input type="checkbox" id="autoSendToggle" class="w-5 h-5 accent-green-500 cursor-pointer" checked>
+                    <div>
+                        <label for="autoSendToggle" class="text-white font-bold text-sm cursor-pointer">Auto-Open WhatsApp</label>
+                        <p class="text-[10px] text-gray-400">Automatically opens app on detection.</p>
+                    </div>
+                </div>
+
+                <button id="startButton" class="w-full group relative px-6 py-4 bg-green-600 hover:bg-green-500 text-white font-black tracking-widest transition-all rounded-xl shadow-lg">
+                    <span class="relative z-10 flex items-center justify-center gap-2">
+                        <i class="ph-bold ph-power"></i> ACTIVATE SENTINEL
+                    </span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 4. Info Modal -->
+        <div id="infoModal" class="absolute inset-0 flex items-center justify-center bg-black/90 z-50 hidden-elm pointer-auto p-4">
+            <div class="bg-gray-800 w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-2xl border border-gray-600 p-6 relative">
+                <button id="closeInfoBtn" class="absolute top-4 right-4 text-gray-400 hover:text-white">
+                    <i class="ph-bold ph-x text-2xl"></i>
+                </button>
+                <h2 class="text-2xl font-bold text-green-400 mb-4">About WildSentinel</h2>
+                <div class="space-y-2 text-gray-300 text-sm">
+                    <p>Real-time AI detection for wildlife safety.</p>
+                    <ul class="list-disc pl-5">
+                        <li>Hybrid AI (COCO + MobileNet)</li>
+                        <li>Auto-Snapshot for dangerous animals</li>
+                        <li>Direct WhatsApp Link generation</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Controls -->
+        <div class="flex flex-col md:flex-row items-end justify-between gap-4 w-full pointer-auto">
+            
+            <div class="glass-panel p-3 rounded-xl w-full md:w-1/3 flex flex-col gap-2">
+                
+                <!-- Sensitivity Controller -->
+                <div class="flex justify-between w-full text-[10px] font-mono text-gray-300 font-bold">
+                    <span class="flex items-center gap-1"><i class="ph-bold ph-sliders"></i> SENSITIVITY</span>
+                    <span id="sensitivity-val" class="text-green-400">5%</span>
+                </div>
+                <input type="range" id="sensitivity" min="1" max="80" value="5" class="w-full h-2 bg-gray-700 rounded-full appearance-none cursor-pointer accent-green-500">
+                
+                <!-- Raw AI Feed Output -->
+                <div class="flex justify-between w-full text-[10px] font-mono text-gray-400 font-bold mt-1">
+                    <span>NEURAL FEED</span>
+                </div>
+                <div id="ai-feed" class="w-full h-6 bg-black rounded border border-gray-700 flex items-center px-2 overflow-hidden">
+                    <span id="ai-feed-text" class="scrolling-text">Initializing...</span>
+                </div>
+                <p id="status-text" class="text-gray-400 font-mono text-[10px] uppercase mt-1">System Ready</p>
+            </div>
+
+            <div class="flex gap-2 w-full md:w-2/3">
+                <div class="glass-panel flex-1 p-2 rounded-xl border-l-4 border-red-500">
+                    <h3 class="text-red-400 font-bold text-[10px] mb-1 flex items-center gap-1">
+                        <i class="ph-fill ph-warning-octagon animate-pulse"></i> HARMFUL
+                    </h3>
+                    <ul id="harmful-list" class="font-mono text-red-200 text-[10px] min-h-[1rem]">
+                        <li class="opacity-40 italic">Scanning...</li>
+                    </ul>
+                </div>
+
+                <div class="glass-panel flex-1 p-2 rounded-xl border-l-4 border-green-500">
+                    <h3 class="text-green-400 font-bold text-[10px] mb-1 flex items-center gap-1">
+                        <i class="ph-fill ph-shield-check"></i> HARMLESS
+                    </h3>
+                    <ul id="harmless-list" class="font-mono text-green-200 text-[10px] min-h-[1rem]">
+                        <li class="opacity-40 italic">Scanning...</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Configuration ---
+        // CHANGED: Removed 'person' to strictly detect animals only.
+        const TRACKED_CLASSES = ['bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe'];
+        
+        const WILD_OVERRIDES = [
+            'lion', 'tiger', 'cheetah', 'leopard', 'jaguar', 'panther',
+            'wolf', 'coyote', 'hyena', 'fox', 'dingo', 'jackal',
+            'boar', 'warthog', 'pig', 'hog', 'swine',
+            'gorilla', 'chimpanzee', 'orangutan', 'monkey', 'baboon',
+            'rhinoceros', 'rhino', 'hippopotamus', 'hippo', 'buffalo', 'bison',
+            'eagle', 'hawk', 'falcon', 'vulture', 'condor',
+            'elephant', 'bear', 'polar bear', 'crocodile', 'alligator'
+        ];
+        
+        const AUTO_CAPTURE_TARGETS = ['lion', 'tiger', 'leopard', 'boar', 'pig', 'hog', 'cheetah', 'bear', 'elephant', 'wolf', 'rhino'];
+
+        const WILD_EMOJIS = {
+            'lion': '🦁', 'tiger': '🐅', 'cheetah': '🐆', 'leopard': '🐆', 'wolf': '🐺', 'fox': '🦊',
+            'boar': '🐗', 'pig': '🐖', 'hog': '🐗', 'gorilla': '🦍', 'monkey': '🐒', 'rhino': '🦏',
+            'eagle': '🦅', 'hawk': '🦅', 'elephant': '🐘', 'bear': '🐻'
+        };
+
+        const BASE_EMOJI_MAP = {
+            'person': '🧍', 'bird': '🐦', 'cat': '🐱', 'dog': '🐕', 'horse': '🐎', 
+            'sheep': '🐑', 'cow': '🐄', 'elephant': '🐘', 'bear': '🐻', 'zebra': '🦓', 'giraffe': '🦒'
+        };
+
+        // --- Variables ---
+        let detectionModel = null;
+        let speciesModel = null;
+        let isVideoReady = false;
+        let lastAlertTime = 0;
+        let sensitivityThreshold = 0.05; // Default 5%
+        let isSoundOn = true;
+        let globalSpeciesContext = null;
+        let userPhoneNumber = "";
+        let autoSendEnabled = true;
+
+        // --- DOM Elements ---
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const loadingDiv = document.getElementById('loading');
+        const cameraLoading = document.getElementById('cameraLoading');
+        const startOverlay = document.getElementById('startOverlay');
+        const startButton = document.getElementById('startButton');
+        const statusText = document.getElementById('status-text');
+        const aiFeedText = document.getElementById('ai-feed-text');
+        const sensitivityInput = document.getElementById('sensitivity');
+        const sensitivityVal = document.getElementById('sensitivity-val');
+        const soundToggle = document.getElementById('soundToggle');
+        const soundIcon = document.getElementById('soundIcon');
+        const soundText = document.getElementById('soundText');
+        const alertLog = document.getElementById('alertLog');
+        const snapBtn = document.getElementById('snapBtn');
+        const phoneNumberInput = document.getElementById('phoneNumber');
+        const autoSendToggle = document.getElementById('autoSendToggle');
+        const harmfulList = document.getElementById('harmful-list');
+        const harmlessList = document.getElementById('harmless-list');
+        const dangerOverlay = document.getElementById('danger-overlay');
+        const infoBtn = document.getElementById('infoBtn');
+        const infoModal = document.getElementById('infoModal');
+        const closeInfoBtn = document.getElementById('closeInfoBtn');
+
+        // --- Initialization ---
+        async function init() {
+            try {
+                await tf.ready();
+                const [detModel, classModel] = await Promise.all([
+                    cocoSsd.load({ base: 'lite_mobilenet_v2' }), 
+                    mobilenet.load({ version: 2, alpha: 1.0 })
+                ]);
+                detectionModel = detModel;
+                speciesModel = classModel;
+                
+                loadingDiv.classList.add('hidden-elm');
+                startOverlay.classList.remove('hidden-elm');
+                startOverlay.classList.add('flex');
+            } catch (err) {
+                console.error("Init failed:", err);
+                loadingDiv.innerHTML = `<div class="text-center"><h2 class="text-xl text-red-500 font-bold">Error Loading AI</h2><p class="text-sm">Refresh to try again</p></div>`;
+            }
+        }
+
+        async function startCamera() {
+            userPhoneNumber = phoneNumberInput.value.trim();
+            autoSendEnabled = autoSendToggle.checked;
+
+            startOverlay.classList.add('hidden-elm');
+            startOverlay.classList.remove('flex');
+            cameraLoading.classList.remove('hidden-elm');
+            cameraLoading.classList.add('flex');
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1280 } },
+                    audio: false
+                });
+                
+                video.srcObject = stream;
+                await video.play();
+
+                isVideoReady = true;
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+                
+                cameraLoading.classList.add('hidden-elm');
+                cameraLoading.classList.remove('flex');
+                
+                statusText.innerText = "ACTIVE MONITORING";
+                statusText.className = "text-green-400 font-mono text-[10px] uppercase mt-1";
+                
+                detectLoop();
+                speciesLoop();
+
+            } catch (err) {
+                console.error("Camera Error:", err);
+                cameraLoading.innerHTML = `
+                    <div class="text-center p-4">
+                        <i class="ph-bold ph-warning text-4xl text-red-500 mb-2"></i>
+                        <h2 class="text-lg font-bold">Camera Access Failed</h2>
+                        <p class="text-sm text-gray-400">Please allow permission and refresh.</p>
+                        <button onclick="location.reload()" class="mt-4 bg-white text-black px-4 py-2 rounded font-bold">Reload</button>
+                    </div>
+                `;
+            }
+        }
+
+        function resizeCanvas() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+        }
+
+        // --- Logic Loops ---
+        async function detectLoop() {
+            if (!detectionModel || !isVideoReady) return;
+            try {
+                const predictions = await detectionModel.detect(video, 20, sensitivityThreshold);
+                drawPredictions(predictions);
+            } catch (e) { console.error(e); }
+            requestAnimationFrame(detectLoop);
+        }
+
+        async function speciesLoop() {
+            if (!speciesModel || !isVideoReady) return;
+            try {
+                const predictions = await speciesModel.classify(video, 10);
+                
+                // Update Neural Feed
+                if (predictions.length > 0) {
+                    const debugStr = predictions.slice(0, 3).map(p => `${p.className.split(',')[0]} ${(p.probability*100).toFixed(0)}%`).join(' | ');
+                    aiFeedText.innerText = debugStr;
+                }
+
+                let foundDangerous = null;
+                if (predictions) {
+                    for (let i = 0; i < predictions.length; i++) {
+                        const prob = predictions[i].probability;
+                        const name = predictions[i].className.toLowerCase();
+                        if (prob > 0.01) { // 1% threshold
+                            const matchedWild = WILD_OVERRIDES.find(wild => name.includes(wild));
+                            if (matchedWild) {
+                                foundDangerous = matchedWild;
+                                // Failsafe Alert: Trigger if > 15% confident
+                                if (prob > 0.15) triggerFailsafeAlert(matchedWild);
+                                break;
+                            }
+                        }
+                    }
+                }
+                globalSpeciesContext = foundDangerous;
+            } catch (e) {}
+            setTimeout(speciesLoop, 200);
+        }
+
+        // --- Drawing ---
+        function drawPredictions(predictions) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            let harmfulItems = new Set();
+            let harmlessItems = new Set();
+            let hasDanger = false;
+            let currentIntruderName = "";
+
+            predictions.forEach(prediction => {
+                if (TRACKED_CLASSES.includes(prediction.class)) {
+                    let displayClass = prediction.class;
+                    let displayEmoji = BASE_EMOJI_MAP[prediction.class] || '⚠️';
+
+                    if (globalSpeciesContext) {
+                        const genericAnimals = ['bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'bear'];
+                        if (genericAnimals.includes(prediction.class)) {
+                            displayClass = globalSpeciesContext;
+                            for (const [key, val] of Object.entries(WILD_EMOJIS)) {
+                                if (displayClass.includes(key)) { displayEmoji = val; break; }
+                            }
+                        }
+                    }
+
+                    const isDangerous = WILD_OVERRIDES.some(wild => displayClass.includes(wild));
+                    if (isDangerous) {
+                        hasDanger = true;
+                        currentIntruderName = displayClass;
+                        harmfulItems.add(`${displayEmoji} ${displayClass.split(',')[0].toUpperCase()}`);
+                    } else {
+                        harmlessItems.add(`${displayEmoji} ${displayClass.toUpperCase()}`);
+                    }
+
+                    // Draw Box
+                    const [x, y, width, height] = prediction.bbox;
+                    const mirroredX = canvas.width - x - width;
+                    const color = isDangerous ? '#EF4444' : '#34D399';
+                    
+                    ctx.beginPath();
+                    ctx.rect(mirroredX, y, width, height);
+                    ctx.lineWidth = 4;
+                    ctx.strokeStyle = color;
+                    ctx.stroke();
+
+                    ctx.fillStyle = isDangerous ? 'rgba(239,68,68,0.9)' : 'rgba(52,211,153,0.9)';
+                    const text = `${displayEmoji} ${displayClass.split(',')[0].toUpperCase()}`;
+                    const tw = ctx.measureText(text).width + 20;
+                    ctx.fillRect(mirroredX, y > 30 ? y - 30 : y + height, tw, 30);
+                    ctx.fillStyle = 'white';
+                    ctx.font = 'bold 14px monospace';
+                    ctx.fillText(text, mirroredX + 10, y > 30 ? y - 10 : y + height + 20);
+                }
+            });
+
+            updateList(harmfulList, harmfulItems, 'text-red-300', 'bg-red-500');
+            updateList(harmlessList, harmlessItems, 'text-green-300', 'bg-green-500');
+
+            if (hasDanger) handleAlert(currentIntruderName);
+            else dangerOverlay.classList.remove('danger-active');
+        }
+
+        function triggerFailsafeAlert(name) {
+            const now = Date.now();
+            if (now - lastAlertTime > 15000) {
+                const fakeSet = new Set([`⚠️ ${name.toUpperCase()}`]);
+                updateList(harmfulList, fakeSet, 'text-red-300', 'bg-red-500');
+                handleAlert(name);
+            }
+        }
+
+        function handleAlert(name) {
+            dangerOverlay.classList.add('danger-active');
+            statusText.innerText = `THREAT: ${name.toUpperCase()}`;
+            statusText.className = "text-red-500 font-bold animate-pulse mt-1";
+            
+            const now = Date.now();
+            if (now - lastAlertTime > 15000) {
+                const isTarget = AUTO_CAPTURE_TARGETS.some(t => name.includes(t));
+                if (isTarget) {
+                    const img = captureFrameData();
+                    addAlertUI(name, img);
+                    downloadSnapshot(img, name);
+                    if (autoSendEnabled && userPhoneNumber) sendWhatsApp(name);
+                    speak(`Warning. ${name} detected.`);
+                } else {
+                    addAlertUI(name, null);
+                    speak(`Warning. ${name} detected.`);
+                }
+                lastAlertTime = now;
+            }
+        }
+
+        // --- Helpers ---
+        function updateList(el, items, textColor, dotColor) {
+            el.innerHTML = '';
+            if (items.size === 0) el.innerHTML = `<li class="opacity-40 italic text-gray-400">Scanning...</li>`;
+            else items.forEach(i => el.innerHTML += `<li class="${textColor} font-bold flex items-center gap-2"><span class="w-2 h-2 rounded-full ${dotColor} animate-pulse"></span> ${i}</li>`);
+        }
+
+        function speak(text) {
+            if (isSoundOn) {
+                const u = new SpeechSynthesisUtterance(text);
+                u.rate = 1.1;
+                window.speechSynthesis.speak(u);
+            }
+        }
+
+        function captureFrameData() {
+            const tCanvas = document.createElement('canvas');
+            tCanvas.width = canvas.width;
+            tCanvas.height = canvas.height;
+            const tCtx = tCanvas.getContext('2d');
+            tCtx.save();
+            tCtx.scale(-1, 1);
+            tCtx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+            tCtx.restore();
+            tCtx.drawImage(canvas, 0, 0);
+            return tCanvas.toDataURL('image/jpeg', 0.8);
+        }
+
+        function downloadSnapshot(data, name) {
+            const a = document.createElement('a');
+            a.download = `WildSentinel_${name}_${Date.now()}.jpg`;
+            a.href = data;
+            a.click();
+        }
+
+        function sendWhatsApp(name) {
+            const msg = `🚨 *WildSentinel Alert*\n\n⚠️ Threat: *${name.toUpperCase()}*\n🕒 ${new Date().toLocaleTimeString()}\n📸 Photo auto-saved to device.`;
+            const url = `https://wa.me/${userPhoneNumber}?text=${encodeURIComponent(msg)}`;
+            window.open(url, '_blank');
+        }
+
+        function addAlertUI(name, img) {
+            const el = document.createElement('div');
+            el.className = "glass-panel p-3 text-white rounded-r-xl border-l-4 border-red-500 mb-2 cursor-pointer hover:bg-red-900/50 transition-colors pointer-events-auto";
+            el.innerHTML = `
+                <div class="flex justify-between items-center mb-1">
+                    <span class="font-bold text-red-400 text-[10px]">ALERT</span>
+                    <span class="text-[10px] text-gray-400">${new Date().toLocaleTimeString()}</span>
+                </div>
+                <div class="font-black text-sm">${name.toUpperCase()}</div>
+                ${img ? `<img src="${img}" class="w-full h-20 object-cover rounded mt-2 border border-white/10">` : ''}
+                <div class="text-[10px] text-green-400 mt-1 flex items-center gap-1">
+                    <i class="ph-bold ph-whatsapp-logo"></i> ${autoSendEnabled ? 'Auto-Opening WA...' : 'Click to Send'}
+                </div>
+            `;
+            el.onclick = () => sendWhatsApp(name);
+            alertLog.prepend(el);
+            setTimeout(() => el.remove(), 10000);
+        }
+
+        // --- Event Listeners ---
+        sensitivityInput.addEventListener('input', (e) => {
+            const v = parseInt(e.target.value);
+            sensitivityThreshold = v / 100;
+            sensitivityVal.innerText = `${v}%`;
+        });
+
+        soundToggle.addEventListener('click', () => {
+            isSoundOn = !isSoundOn;
+            soundText.innerText = isSoundOn ? "ON" : "OFF";
+            soundText.className = isSoundOn ? "text-xs font-black text-green-400" : "text-xs font-black text-gray-500";
+            soundIcon.className = isSoundOn ? "ph-fill ph-speaker-high text-xl" : "ph-fill ph-speaker-slash text-xl";
+            window.speechSynthesis.cancel();
+        });
+
+        snapBtn.addEventListener('click', () => {
+            const data = captureFrameData();
+            downloadSnapshot(data, 'Manual');
+            snapBtn.classList.add('bg-white', 'text-black');
+            setTimeout(() => snapBtn.classList.remove('bg-white', 'text-black'), 200);
+        });
+
+        infoBtn.addEventListener('click', () => {
+            infoModal.classList.remove('hidden-elm');
+            infoModal.classList.add('flex');
+        });
+        closeInfoBtn.addEventListener('click', () => {
+            infoModal.classList.add('hidden-elm');
+            infoModal.classList.remove('flex');
+        });
+
+        startButton.addEventListener('click', startCamera);
+        document.addEventListener('DOMContentLoaded', init);
+
+    </script>
+</body>
+</html>
